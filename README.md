@@ -7,7 +7,7 @@ Use this link to download datasets used in this project:
 https://compvis.site.hw.ac.uk/dataset/cmilk-thermal-facial-temperature-dataset/
 
 # Notes
-The code was created in Matlab R2025b, any older versions were not verified.
+The code was created in Matlab R2023b, any older versions were not verified.
 
 # Required Packages:
 1) Global Optimization Toolbox
