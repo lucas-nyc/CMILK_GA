@@ -1,5 +1,6 @@
 clear
 clearvars
+%%
 groundtruth = readtable('groundtruth.csv'); 
 fprintf('Done loading ground truth...');
 load('simulation_v4.mat');
@@ -338,19 +339,22 @@ optimizers = {'pso','de','gwo','ga'};
 labels = {'PSO','DE','GWO','GA'};
 mat_files = {'pso_results.mat','de_results.mat','gwo_results.mat','ga_results.mat'};
 csv_files = {'pso_best_rmse_per_iter.csv','de_best_rmse_per_gen.csv','gwo_best_rmse_per_iter.csv','ga_best_rmse_per_gen.csv'};
-best_struct_names = {'best_pso','best_de','best_gwo','best_ga'};
+best_struct_names = {'best_pso','best_de','best_gwo','best_ga'}; % variable names inside mats, if present
+
+% store results
 hist_vecs = cell(size(optimizers));
 best_structs = repmat(struct('params',[NaN,NaN],'rmse',NaN,'evals',NaN), numel(optimizers), 1);
 
 for i = 1:numel(optimizers)
     hist_vecs{i} = load_history_vector(mat_files{i}, csv_files{i});
+    % try to load best_* struct from mat file if available
     if exist(mat_files{i}, 'file')
         try
             S = load(mat_files{i});
             fn = best_struct_names{i};
             if isfield(S, fn)
                 best_structs(i) = S.(fn);
-            elseif isfield(S,'best_ga') && strcmp(optimizers{i},'ga')
+            elseif isfield(S,'best_ga') && strcmp(optimizers{i},'ga') % fallback naming
                 best_structs(i) = S.best_ga;
             elseif isfield(S,'best_pso') && strcmp(optimizers{i},'pso')
                 best_structs(i) = S.best_pso;
@@ -360,9 +364,13 @@ for i = 1:numel(optimizers)
                 best_structs(i) = S.best_gwo;
             end
         catch
+            % ignore; leave best_structs as NaN
         end
     end
 end
+
+
+% write summary CSV with best param & RMSE if present
 Method = labels(:);
 Best_k = NaN(numel(Method),1);
 Best_eps = NaN(numel(Method),1);
@@ -390,6 +398,7 @@ fprintf('Wrote optimizers_summary_all.csv\n');
 maxIter = 18;
 verbose = true;
 
+% Load histories if not present
 if ~exist('hist_pso','var') && exist('pso_results.mat','file')
     tmp = load('pso_results.mat'); if isfield(tmp,'hist_pso'), hist_pso = tmp.hist_pso; end; end
 if ~exist('hist_de','var') && exist('de_results.mat','file')
@@ -399,32 +408,39 @@ if ~exist('hist_gwo','var') && exist('gwo_results.mat','file')
 if ~exist('hist_ga','var') && exist('ga_results.mat','file')
     tmp = load('ga_results.mat'); if isfield(tmp,'hist_ga'), hist_ga = tmp.hist_ga; end; end
 
+% Candidate field names
 meanCandidates = {'mean_score_per_iter','mean_rmse_per_iter','mean_score_per_gen','mean_rmse_per_gen','mean_score','mean_rmse'};
 bestParamsCandidates = {'best_params_per_iter','best_params','global_best_params','global_best','best_params_per_gen'};
 bestScalarCandidates = {'best_rmse_per_iter','best_rmse_per_gen','best_score_per_iter','best_score_per_gen','best_rmse','best_score'};
 timeCandidates = {'time_per_iter','time_per_gen','GenDuration_s','gen_duration_s','GenDuration','gen_duration','cum_time','CumulativeTime_s'};
 
+% Extract required vectors/matrices with robust helpers (see local functions below)
 pso_mean = extract_vec_safe(hist_pso, meanCandidates);
 de_mean  = extract_vec_safe(hist_de,  meanCandidates);
 gwo_mean = extract_vec_safe(hist_gwo, meanCandidates);
 ga_mean  = extract_vec_safe(hist_ga,  meanCandidates);
 
+% fallback: if mean missing use best scalar to at least have something to plot
 if isempty(pso_mean), pso_mean = extract_vec_safe(hist_pso, bestScalarCandidates); end
 if isempty(de_mean),  de_mean  = extract_vec_safe(hist_de,  bestScalarCandidates); end
 if isempty(gwo_mean), gwo_mean = extract_vec_safe(hist_gwo, bestScalarCandidates); end
 if isempty(ga_mean),  ga_mean  = extract_vec_safe(hist_ga,  bestScalarCandidates); end
 
+% GA best scalar (single dashed line)
 ga_best = extract_vec_safe(hist_ga, bestScalarCandidates);
 
+% best_params Nx2 matrices
 pso_params = extract_mat2_safe(hist_pso, bestParamsCandidates);
 de_params  = extract_mat2_safe(hist_de,  bestParamsCandidates);
 gwo_params = extract_mat2_safe(hist_gwo, bestParamsCandidates);
 ga_params  = extract_mat2_safe(hist_ga,  bestParamsCandidates);
 
+% times (PSO/DE/GWO) and GA gen duration
 pso_time = extract_vec_safe(hist_pso, timeCandidates);
 de_time  = extract_vec_safe(hist_de,  timeCandidates);
 gwo_time = extract_vec_safe(hist_gwo, timeCandidates);
 
+% GA: prefer gen_duration_s (explicit field) otherwise fallback
 ga_gen_duration = [];
 if isstruct(hist_ga) && isfield(hist_ga,'gen_duration_s') && isnumeric(hist_ga.gen_duration_s)
     ga_gen_duration = hist_ga.gen_duration_s(:);
@@ -434,11 +450,14 @@ else
     ga_gen_duration = extract_vec_safe(hist_ga, timeCandidates);
 end
 
+% determine number of iterations to keep: min(max available, maxIter)
 availableLens = [numel(pso_mean), numel(de_mean), numel(gwo_mean), numel(ga_mean), ...
     size(pso_params,1), size(de_params,1), size(gwo_params,1), size(ga_params,1), ...
     numel(pso_time), numel(de_time), numel(gwo_time), numel(ga_gen_duration), numel(ga_best)];
 nAvail = max([availableLens, 0]);
-nIter = min(maxIter, max(1, nAvail)); 
+nIter = min(maxIter, max(1, nAvail));  % ensure at least one row if any data present
+
+% pad/trim to nIter
 pso_plot = pad_or_nan(pso_mean, nIter);
 de_plot  = pad_or_nan(de_mean,  nIter);
 gwo_plot = pad_or_nan(gwo_mean, nIter);
@@ -455,6 +474,7 @@ de_time_p  = pad_or_nan(de_time, nIter);
 gwo_time_p = pad_or_nan(gwo_time, nIter);
 ga_gen_dur  = pad_or_nan(ga_gen_duration, nIter);
 
+% Build combined table (columns: mean_rmse, best_k, best_eps, time)
 Iter = (1:nIter)';
 CombinedTable = table(Iter, ...
     pso_plot, pso_mat(:,1), pso_mat(:,2), pso_time_p, ...
@@ -467,6 +487,7 @@ CombinedTable = table(Iter, ...
         'GWO_mean_rmse','GWO_best_k','GWO_best_eps','GWO_time_s', ...
         'GA_mean_rmse','GA_best_k','GA_best_eps','GA_genDuration_s' });
 
+% save combined table
 writetable(CombinedTable,'optimizers_combined_iter_table.csv');
 save('optimizers_combined_iter_table.mat','CombinedTable');
 if verbose
@@ -474,6 +495,7 @@ if verbose
     disp(CombinedTable);
 end
 
+% Plot mean curves and GA best dashed line
 x = (1:nIter)';
 figure('Units','normalized','Position',[0.15 0.15 0.7 0.6]); clf; hold on; grid on;
 if any(isfinite(pso_plot)), plot(x, pso_plot, '-o', 'DisplayName','PSO mean', 'LineWidth',1.4); end
@@ -481,14 +503,29 @@ if any(isfinite(de_plot)),  plot(x, de_plot,  '-s', 'DisplayName','DE mean',  'L
 if any(isfinite(gwo_plot)), plot(x, gwo_plot, '-^', 'DisplayName','GWO mean', 'LineWidth',1.4); end
 if any(isfinite(ga_plot)),  plot(x, ga_plot,  '-d', 'DisplayName','GA mean',  'LineWidth',1.4); end
 
+% GA best single dashed line
 if any(isfinite(ga_best_plot))
-    plot(x, ga_best_plot, '--k', 'DisplayName','GA best (single)', 'LineWidth',2.0);
+    plot(x, ga_best_plot, '--k', 'DisplayName','best', 'LineWidth',2.0);
 end
 
-xlim([1 maxIter]); xlabel('Iteration'); ylabel('RMSE');
-title(sprintf('Mean RMSE convergence (first %d iterations) — GA best overlaid', maxIter));
-legend('Location','best');
+ax = gca;
+ax.GridLineWidth = 2;
+ax.LineWidth = 2;
+ax.FontSize = 20;
 
+xlim([1 maxIter]); xlabel('Iteration'); ylabel('RMSE');
+title('\textbf{$\overline{\mathrm{RMSE}}$} Convergence', ...
+      'Interpreter','latex', ...
+      'FontSize',60);
+xlabel('\textbf{Iteration}', ...
+       'Interpreter','latex', ...
+       'FontSize',50);
+ylabel('\textbf{$\overline{\mathrm{RMSE}}$}', ...
+       'Interpreter','latex', ...
+       'FontSize',50);
+legend('Location','best', 'FontSize', 28);
+
+% autoscale y with padding
 allvals = [pso_plot; de_plot; gwo_plot; ga_plot; ga_best_plot];
 if any(isfinite(allvals))
     finiteVals = allvals(isfinite(allvals));
@@ -501,13 +538,16 @@ if any(isfinite(allvals))
     end
 end
 
+% annotate final GA best if present
 if any(isfinite(ga_best_plot))
     idx = find(isfinite(ga_best_plot),1,'last');
-    text(x(idx), ga_best_plot(idx), sprintf('  best=%.4g', ga_best_plot(idx)), 'FontSize',9, 'VerticalAlignment','bottom');
+    text(x(idx), ga_best_plot(idx), sprintf('  best=%.4g', ga_best_plot(idx)), 'FontSize',15, 'VerticalAlignment','bottom');
 end
 
-saveas(gcf,'optimizers_mean_convergence_combined.png');
-if verbose, fprintf('Saved optimizers_mean_convergence_combined.png\n'); end
+set(gcf, 'Position', get(0, 'ScreenSize'));
+drawnow;
+exportgraphics(gcf,'optimizers_convergence_all_v2.png', 'Resolution', 300);
+if verbose, fprintf('Saved optimizers_convergence_all_v2.png\n'); end
 
 %% --------------------- Ablation Study ---------------------
 k_best = 19;
@@ -1616,4 +1656,156 @@ function imputed_dataset = run_cmilk_single(modified_dataset, k_val, eps_val, nu
     end 
 
     imputed_dataset = updated_dataset;
+end
+
+function v = load_history_vector(matFile, csvFile)
+    v = [];
+
+    if exist(matFile, 'file')
+        try
+            S = load(matFile);
+            histCandidates = {'hist_grid','hist_bayes','hist_ga','hist_pso','hist_de','hist_gwo','history'};
+            for hc = 1:numel(histCandidates)
+                if isfield(S, histCandidates{hc})
+                    h = S.(histCandidates{hc});
+                    v = extract_vec_safe(h, { ...
+                        'best_rmse_per_iter','best_rmse_per_gen','best_rmse_per_eval', ...
+                        'ObjectiveMinimumTrace','ObjectiveTrace','Best_RMSE','best_rmse' ...
+                    });
+                    if ~isempty(v), v = v(:); return; end
+                end
+            end
+
+            v = extract_vec_safe(S, { ...
+                'best_rmse_per_iter','best_rmse_per_gen','best_rmse_per_eval', ...
+                'ObjectiveMinimumTrace','ObjectiveTrace' ...
+            });
+            if ~isempty(v), v = v(:); return; end
+        catch
+        end
+    end
+
+    if exist(csvFile, 'file')
+        try
+            T = readtable(csvFile);
+
+            if any(strcmpi(T.Properties.VariableNames, 'Best_RMSE'))
+                v = double(T.Best_RMSE);
+                v = v(:);
+                return;
+            end
+
+            candCols = {'ObjectiveMinimumTrace','ObjectiveTrace','RMSE','rmse','Best','best'};
+            for c = 1:numel(candCols)
+                idx = find(strcmpi(T.Properties.VariableNames, candCols{c}), 1);
+                if ~isempty(idx)
+                    v = double(T{:, idx});
+                    v = v(:);
+                    return;
+                end
+            end
+
+            isNum = varfun(@isnumeric, T, 'OutputFormat','uniform');
+            numCols = find(isNum);
+            if ~isempty(numCols)
+                v = double(T{:, numCols(end)});
+                v = v(:);
+                return;
+            end
+        catch
+        end
+    end
+end
+
+function v = extract_vec_safe(H, candidates)
+    v = [];
+    if isempty(H), return; end
+    if istable(H)
+        for ii = 1:numel(candidates)
+            if any(strcmpi(H.Properties.VariableNames, candidates{ii}))
+                v = H.(candidates{ii})(:); return;
+            end
+        end
+    elseif isstruct(H)
+        for ii = 1:numel(candidates)
+            fld = candidates{ii};
+            if isfield(H, fld) && isnumeric(H.(fld))
+                v = H.(fld)(:); return;
+            end
+        end
+        fn = fieldnames(H);
+        for k = 1:numel(fn)
+            sub = H.(fn{k});
+            if isstruct(sub)
+                for ii = 1:numel(candidates)
+                    fld = candidates{ii};
+                    if isfield(sub, fld) && isnumeric(sub.(fld))
+                        v = sub.(fld)(:); return;
+                    end
+                end
+            end
+        end
+    elseif isnumeric(H) && isvector(H)
+        v = H(:);
+    end
+end
+
+function M = extract_mat2_safe(H, candidates)
+    M = [];
+    if isempty(H), return; end
+    if isstruct(H)
+        for ii = 1:numel(candidates)
+            fld = candidates{ii};
+            if isfield(H, fld) && isnumeric(H.(fld)) && size(H.(fld),2)==2
+                M = H.(fld); return;
+            end
+        end
+        fn = fieldnames(H);
+        for k = 1:numel(fn)
+            sub = H.(fn{k});
+            if isstruct(sub)
+                for ii = 1:numel(candidates)
+                    fld = candidates{ii};
+                    if isfield(sub, fld) && isnumeric(sub.(fld)) && size(sub.(fld),2)==2
+                        M = sub.(fld); return;
+                    end
+                end
+            end
+        end
+    elseif istable(H)
+        for ii = 1:numel(candidates)
+            if any(strcmpi(H.Properties.VariableNames, candidates{ii}))
+                tmp = H.(candidates{ii});
+                if isnumeric(tmp) && size(tmp,2)==2
+                    M = tmp; return;
+                end
+            end
+        end
+    elseif isnumeric(H) && size(H,2)==2
+        M = H;
+    end
+end
+
+function y = pad_or_nan(x, n)
+    y = nan(n,1);
+    if isempty(x), return; end
+    x = x(:);
+    m = min(n, numel(x));
+    y(1:m) = x(1:m);
+
+    if m < n
+        y(m+1:n) = x(m); 
+    end
+end
+
+function out = pad_mat2(M, N)
+    if isempty(M) || ~isnumeric(M) || size(M,2) ~= 2
+        out = nan(N,2); return;
+    end
+    r = size(M,1);
+    if r >= N
+        out = M(1:N,:);
+    else
+        out = [M; nan(N-r,2)];
+    end
 end
