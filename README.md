@@ -41,4 +41,4 @@ Ng Yean Chun, Alexander G. Belyaev, F. C. M. Choong, Joon Huang Chuah, Shahrel A
 
 CMILK_GA:
 
-Y. C. Ng, A. G. Belyaev, F. C. M. Choong, S. A. Suandi, J. H. Chuah and B. Rudrusamy, "Genetic Algorithm-Enhanced CMILK for Robust Thermal Facial Data Imputation," in IEEE Access, vol. 14, pp. 49192-49206, 2026, doi: https://10.1109/ACCESS.2026.3678483
+Y. C. Ng, A. G. Belyaev, F. C. M. Choong, S. A. Suandi, J. H. Chuah and B. Rudrusamy, "Genetic Algorithm-Enhanced CMILK for Robust Thermal Facial Data Imputation," in IEEE Access, vol. 14, pp. 49192-49206, 2026, doi: https://doi.org/10.1109/ACCESS.2026.3678483
